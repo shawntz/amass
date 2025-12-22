@@ -114,11 +114,16 @@ library(eyeris)
 
 cat("Starting eyeris processing for ${ASC_FILE}\n")
 
-# Find pandoc from module-loaded path
-pandoc_path <- dirname(system("which pandoc", intern = TRUE))
-if (nchar(pandoc_path) > 0) {
-    Sys.setenv(RSTUDIO_PANDOC = pandoc_path)
-    cat(sprintf("Using pandoc at: %s\n", pandoc_path))
+# Find pandoc from module-loaded path and set up rmarkdown
+pandoc_binary <- system("which pandoc", intern = TRUE)
+if (file.exists(pandoc_binary)) {
+    pandoc_dir <- dirname(pandoc_binary)
+    # Use rmarkdown's find_pandoc to properly set up pandoc environment
+    rmarkdown::find_pandoc(dir = pandoc_dir)
+    cat(sprintf("Using pandoc at: %s\n", pandoc_dir))
+    cat(sprintf("Pandoc version: %s\n", rmarkdown::pandoc_version()))
+} else {
+    cat("Warning: pandoc not found, HTML report generation may fail\n")
 }
 
 tryCatch({
