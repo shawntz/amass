@@ -178,7 +178,8 @@ tryCatch({
         eyeris::bidsify(
             eyeris = eyeris_data,
             save_all = ${SAVE_ALL^^},
-            bids_dir = "${BIDS_DERIVATIVES_DIR}",
+            bids_dir = "${BIDS_BASE_DIR}",
+            derivatives_dir = "${BIDS_DERIVATIVES_DIR}",
             participant_id = "${SUBJECT_ID_FORMATTED}",
             task_name = "${TASK_NAME}",
             run_num = "${RUN_ID}",
