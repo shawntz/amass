@@ -85,8 +85,17 @@ for RUN_ID in "${RUNS[@]}"; do
     
     mkdir -p "$DERIVATIVES_DIR"
 
-    module load system
-    module load pandoc/2.7.3
+    # Check for local pandoc installation first
+    LOCAL_PANDOC="$HOME/.local/bin/pandoc"
+    if [ -x "$LOCAL_PANDOC" ]; then
+        log_message "INFO" "Using local pandoc at $LOCAL_PANDOC"
+        export PATH="$HOME/.local/bin:$PATH"
+    else
+        log_message "INFO" "Using module pandoc"
+        module load system
+        module load pandoc/2.7.3
+    fi
+
     module load R
 
 R_SCRIPT=$(cat <<EOF
