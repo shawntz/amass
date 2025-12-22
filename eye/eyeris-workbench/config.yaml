@@ -1,0 +1,26 @@
+project:
+  base_dir: "/oak/stanford/groups/awagner/yaams-haams/eyeris-workbench"
+  user_email: "stschwartz@stanford.edu"
+  task_name: "amass"
+
+slurm:
+  email: "${project.user_email}"
+  time: "06:00:00"
+  mem_per_cpu: "8G"
+  cpus_per_task: "12"
+  array_throttle: "20"
+  log_dir: "${project.base_dir}/../logs"
+  partition: "awagner,hns,normal"
+
+bids:
+  base_dir: "${project.base_dir}/.."
+  derivatives_dir: "/oak/stanford/groups/awagner/yaams-haams/derivatives/eyeris-3.0.1"
+  save_all: true
+  merge_epochs: false
+  save_raw: true
+  html_report: true
+  report_seed: 1234
+  verbose: true
+
+epoch:
+  verbose: true

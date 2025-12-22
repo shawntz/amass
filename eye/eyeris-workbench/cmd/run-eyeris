@@ -1,0 +1,230 @@
+#!/bin/bash
+
+# AMASS Retrieval batch eyeris preprocessing job
+
+set -e  # exit on error
+
+JOB_NAME=$1
+SUBJECT_LIST=$2
+
+SUBJECT=$(sed -n "$((SLURM_ARRAY_TASK_ID + 1))p" "$SUBJECT_LIST")
+if [ -z "$SUBJECT" ]; then
+    log_message "ERROR" "No subject found at index $SLURM_ARRAY_TASK_ID in $SUBJECT_LIST"
+    exit 1
+fi
+
+command -v pip3 >/dev/null || module load python/3.9.0
+python3 -c "import yaml" 2>/dev/null || python3 -m pip install --user pyyaml
+
+get_yaml_value() {
+    local key=$1
+    python3 -c "
+import yaml
+import sys
+with open('/oak/stanford/groups/awagner/yaams-haams/eyeris-workbench/config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+value = config
+for k in sys.argv[1].split('.'):
+    value = value[k]
+print(value)
+" "$key"
+}
+
+TASK_NAME=$(get_yaml_value "project.task_name")
+PROJECT_BASE_DIR=$(get_yaml_value "project.base_dir")
+SLURM_LOG_DIR=$(get_yaml_value "slurm.log_dir")
+BIDS_BASE_DIR=$(get_yaml_value "bids.base_dir")
+BIDS_DERIVATIVES_DIR=$(get_yaml_value "bids.derivatives_dir")
+SAVE_ALL=$(get_yaml_value "bids.save_all")
+MERGE_EPOCHS=$(get_yaml_value "bids.merge_epochs")
+SAVE_RAW=$(get_yaml_value "bids.save_raw")
+HTML_REPORT=$(get_yaml_value "bids.html_report")
+REPORT_SEED=$(get_yaml_value "bids.report_seed")
+VERBOSE=$(get_yaml_value "bids.verbose")
+
+PROJECT_BASE_DIR=$(echo "$PROJECT_BASE_DIR" | sed "s|\${project.base_dir}|$PROJECT_BASE_DIR|g")
+SLURM_LOG_DIR=$(echo "$SLURM_LOG_DIR" | sed "s|\${project.base_dir}|$PROJECT_BASE_DIR|g")
+BIDS_BASE_DIR=$(echo "$BIDS_BASE_DIR" | sed "s|\${project.base_dir}|$PROJECT_BASE_DIR|g")
+BIDS_DERIVATIVES_DIR=$(echo "$BIDS_DERIVATIVES_DIR" | sed "s|\${project.base_dir}|$PROJECT_BASE_DIR|g")
+
+LOG_DIR="${SLURM_LOG_DIR}/${JOB_NAME}"
+mkdir -p "$LOG_DIR"
+
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$timestamp] [$level] $message" >> "$LOG_DIR/slurm_${JOB_NAME}_${SLURM_ARRAY_TASK_ID}.log"
+}
+
+log_message "INFO" "Starting batch BIDS processing"
+log_message "INFO" "SLURM_ARRAY_TASK_ID: $SLURM_ARRAY_TASK_ID"
+log_message "INFO" "Processing subject: $SUBJECT"
+
+BIDS_SUBJECT="$SUBJECT"
+# Extract numeric ID by removing "sub-" prefix if present
+SUBJECT_ID_FORMATTED="${BIDS_SUBJECT#sub-}"
+
+RUNS=("01" "02" "03" "04" "05" "06" "07" "08")
+
+for RUN_ID in "${RUNS[@]}"; do
+  log_message "INFO" "Processing subject $SUBJECT, run $RUN_ID"
+
+  ASC_FILE="${BIDS_BASE_DIR}/${BIDS_SUBJECT}/eye/${BIDS_SUBJECT}_task-${TASK_NAME}_run-${RUN_ID}_eyetrack.asc"
+  DERIVATIVES_DIR="${BIDS_DERIVATIVES_DIR}/${BIDS_SUBJECT}/eye"
+  RDS_FILE="${DERIVATIVES_DIR}/${BIDS_SUBJECT}_task-${TASK_NAME}_run-${RUN_ID}_desc-eyeris_preproc_epoched.RDS"
+
+  log_message "INFO" "Processing: $ASC_FILE"
+  log_message "INFO" "Derivatives directory: $DERIVATIVES_DIR"
+
+  if [ ! -f "$ASC_FILE" ]; then
+      log_message "WARNING" "ASC file not found: $ASC_FILE"
+      echo "($(date)) [WARNING] - ASC file not found for ${BIDS_SUBJECT} run-${RUN_ID}"
+      continue  # skip this file but keep processing others
+  fi
+    
+    mkdir -p "$DERIVATIVES_DIR"
+
+    module load system
+    module load pandoc/2.7.3
+    module load R
+
+R_SCRIPT=$(cat <<EOF
+#!/usr/bin/env Rscript
+
+log_file <- file("${LOG_DIR}/${JOB_NAME}_${SLURM_ARRAY_TASK_ID}_R.log", open = "a")
+sink(log_file, type = "output")
+sink(log_file, type = "message")
+
+install_if_missing <- function(pkg, repos = "https://cloud.r-project.org") {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg, repos = repos, dependencies = TRUE, lib = Sys.getenv("R_LIBS_USER"))
+  }
+}
+
+if (!dir.exists(Sys.getenv("R_LIBS_USER"))) {
+  dir.create(Sys.getenv("R_LIBS_USER"), recursive = TRUE)
+}
+
+install_if_missing("knitr")
+install_if_missing("rmarkdown")
+install_if_missing("jsonlite")
+
+library(eyeris)
+
+cat("Starting eyeris processing for ${ASC_FILE}\n")
+
+# Find pandoc from module-loaded path
+pandoc_path <- dirname(system("which pandoc", intern = TRUE))
+if (nchar(pandoc_path) > 0) {
+    Sys.setenv(RSTUDIO_PANDOC = pandoc_path)
+    cat(sprintf("Using pandoc at: %s\n", pandoc_path))
+}
+
+tryCatch({
+    eyeris::eyelogger({
+        cat("Running eyeris::glassbox() on ${ASC_FILE}\n")
+        eyeris_data <- eyeris::glassbox(
+            "${ASC_FILE}",
+            load_asc = list(block = $((10#${RUN_ID} - 1))),
+            lpfilt = list(plot_freqz = FALSE),
+            interactive_preview = FALSE
+        )
+
+        cat("Running eyeris::epoch() on ${ASC_FILE}\n")
+
+        # Process retrieval task epochs
+        cat("Running epoch 1 - RET_PREGOAL_FIXATION:\n")
+        eyeris_data <- eyeris::epoch(
+            eyeris = eyeris_data,
+            events = c(
+                "RET_PREGOAL_FIXATION__START {BLOCK} {TRIALID} {STIM}",
+                "RET_PREGOAL_FIXATION__END {BLOCK} {TRIALID} {STIM}"
+            ),
+            label = "pregoal"
+        )
+
+        cat("Running epoch 2 - RET_GOAL_CUE:\n")
+        eyeris_data <- eyeris::epoch(
+            eyeris = eyeris_data,
+            events = c(
+                "RET_GOAL_CUE__START {BLOCK} {TRIALID} {STIM}",
+                "RET_GOAL_CUE__END {BLOCK} {TRIALID} {STIM}"
+            ),
+            label = "goal"
+        )
+
+        cat("Running epoch 3 - RET_PREPROBE_FIXATION:\n")
+        eyeris_data <- eyeris::epoch(
+            eyeris = eyeris_data,
+            events = c(
+                "RET_PREPROBE_FIXATION__START {BLOCK} {TRIALID} {STIM}",
+                "RET_PREPROBE_FIXATION__END {BLOCK} {TRIALID} {STIM}"
+            ),
+            label = "prestim"
+        )
+
+        cat("Running epoch 4 - RET_PROBE:\n")
+        eyeris_data <- eyeris::epoch(
+            eyeris = eyeris_data,
+            events = c(
+                "RET_PROBE__START {BLOCK} {TRIALID} {STIM}",
+                "RET_PROBE__END {BLOCK} {TRIALID} {STIM}"
+            ),
+            label = "stim"
+        )
+
+        cat("Running bidsify function\n")
+        eyeris::bidsify(
+            eyeris = eyeris_data,
+            save_all = ${SAVE_ALL^^},
+            bids_dir = "${BIDS_DERIVATIVES_DIR}",
+            participant_id = "${SUBJECT_ID_FORMATTED}",
+            task_name = "${TASK_NAME}",
+            run_num = "${RUN_ID}",
+            save_raw = ${SAVE_RAW^^},
+            html_report = ${HTML_REPORT^^},
+            report_seed = ${REPORT_SEED},
+            csv_enabled = FALSE,
+            db_enabled = TRUE,
+            db_path = "${BIDS_DERIVATIVES_DIR}/${TASK_NAME}",
+            parallel_processing = TRUE,
+            verbose = ${VERBOSE^^}
+        )
+        cat("BIDS processing completed successfully\n")
+
+        cat("Saving preprocessed eyeris object\n")
+        saveRDS(
+            eyeris_data,
+            "${RDS_FILE}",
+            compress = FALSE
+        )
+        cat("Preprocessed eyeris object saved to ${RDS_FILE}\n")
+    }, log_dir = file.path("${SLURM_LOG_DIR}", "eyeris", "sub-${SUBJECT_ID_FORMATTED}"))
+}, error = function(e) {
+    cat("Error in R processing: ", e\$message, "\n")
+    quit(status = 1)
+}, finally = {
+    sink(type = "output")
+    sink(type = "message")
+    close(log_file)
+})
+EOF
+)
+
+    R_SCRIPT_FILE="/tmp/bidsify_batch_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}_${RUN_ID}.R"
+    echo "$R_SCRIPT" > "$R_SCRIPT_FILE"
+    log_message "INFO" "Executing R script: $R_SCRIPT_FILE"
+    Rscript "$R_SCRIPT_FILE"
+
+    if [ $? -eq 0 ]; then
+        log_message "INFO" "Finished run-${RUN_ID} for ${BIDS_SUBJECT}"
+    else
+        log_message "ERROR" "Failed run-${RUN_ID} for ${BIDS_SUBJECT}"
+    fi
+
+    rm -f "$R_SCRIPT_FILE"
+
+done
+
+log_message "INFO" "Job completed successfully" 

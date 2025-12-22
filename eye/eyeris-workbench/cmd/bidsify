@@ -1,0 +1,314 @@
+#!/bin/bash
+
+# AMASS Retrieval Pupil Preprocessing Script
+# handles EDF to ASC conversion and BIDS-style file organization
+
+set -e  # exit on error
+
+# configuration
+EDF2ASC_PATH="/oak/stanford/groups/awagner/yaams-haams/eyeris-workbench/cmd/edf2asc"
+SOURCEDATA_DIR="/oak/stanford/groups/awagner/yaams-haams/sourcedata"
+PUPIL_DIR="/oak/stanford/groups/awagner/yaams-haams/sourcedata/eye"
+
+# logging setup
+LOG_DIR="/oak/stanford/groups/awagner/yaams-haams/logs/eyeris"
+mkdir -p "$LOG_DIR"
+TIMESTAMP=$(date +"%Y%m%dT%H%M%S")
+LOG_FILE="$LOG_DIR/make_${TIMESTAMP}.log"
+
+log_message() {
+    local level="$1"
+    local message="$2"
+    local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+}
+
+log_message "INFO" "Starting CLAMP preprocessing script"
+log_message "INFO" "Log file: $LOG_FILE"
+log_message "INFO" "Arguments: $*"
+
+# colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+print_status() {
+    log_message "INFO" "$1"
+    echo -e "${GREEN}[INFO]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+print_warning() {
+    log_message "WARNING" "$1"
+    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+print_error() {
+    log_message "ERROR" "$1"
+    echo -e "${RED}[ERROR]${NC} $1" | tee -a "$LOG_FILE"
+}
+
+convert_edf_to_asc() {
+    log_message "INFO" "Entering convert_edf_to_asc function"
+    print_status "Converting EDF files to ASC format..."
+    
+    if [ ! -f "$EDF2ASC_PATH" ]; then
+        print_error "EDF2ASC converter not found at $EDF2ASC_PATH"
+        exit 1
+    fi
+    
+    log_message "INFO" "EDF2ASC converter found at: $EDF2ASC_PATH"
+    
+    # find all EDF files in pupil subdirectories
+    edf_count=0
+    converted_count=0
+    skipped_count=0
+    already_bids_count=0
+    
+    find "$PUPIL_DIR" -name "*.EDF" -type f | while read -r edf_file; do
+        edf_count=$((edf_count + 1))
+        log_message "INFO" "Processing EDF file: $edf_file"
+        
+        # get the directory and filename
+        dir=$(dirname "$edf_file")
+        filename=$(basename "$edf_file" .EDF)
+        
+        # create ASC filename
+        asc_file="$dir/${filename}.asc"
+
+        # check if ASC file exists in BIDS output
+        subject_dir=$(echo "$dir" | awk -F/ '{for(i=1;i<=NF;i++) if($i ~ /^sub-[0-9]+$/) print $i}')
+        subject_num=$(echo "$subject_dir" | sed 's/^sub-//')
+        bids_subject="sub-${subject_num}"
+        
+        if [[ $filename =~ ([0-9]+) ]]; then
+            run_num="0${BASH_REMATCH[1]}"
+        else
+            run_num="00"
+        fi
+        bids_asc_file="${bids_subject}/eye/${bids_subject}_task-amass_run-${run_num}_eyetrack.asc"
+        
+        if [ -f "$bids_asc_file" ]; then
+            print_status "Skipping $edf_file (BIDS ASC file already exists: $bids_asc_file)"
+            already_bids_count=$((already_bids_count + 1))
+            log_message "INFO" "Skipped (BIDS ASC exists): $edf_file -> $bids_asc_file"
+            continue
+        fi
+        
+        # convert if ASC file doesn't exist or EDF is newer
+        if [ ! -f "$asc_file" ] || [ "$edf_file" -nt "$asc_file" ]; then
+            print_status "Converting $edf_file to $asc_file"
+            log_message "INFO" "Running: $EDF2ASC_PATH $edf_file $asc_file"
+            "$EDF2ASC_PATH" "$edf_file" "$asc_file" 2>&1 | tee -a "$LOG_FILE"
+            converted_count=$((converted_count + 1))
+            log_message "INFO" "Successfully converted: $edf_file"
+        else
+            print_status "Skipping $edf_file (ASC file already exists and up to date)"
+            skipped_count=$((skipped_count + 1))
+            log_message "INFO" "Skipped (up to date): $edf_file"
+        fi
+    done
+    
+    log_message "INFO" "EDF conversion summary: $edf_count total files, $converted_count converted, $skipped_count skipped, $already_bids_count already in BIDS"
+    log_message "INFO" "Exiting convert_edf_to_asc function"
+}
+
+move_asc_files() {
+    log_message "INFO" "Entering move_asc_files function"
+    print_status "Moving ASC files to session directories..."
+    
+    subject_count=0
+    asc_count=0
+    moved_count=0
+    skipped_bids_count=0
+    
+    for subject_dir in "$PUPIL_DIR"/sub-*; do
+        if [ ! -d "$subject_dir" ]; then
+            continue
+        fi
+        
+        subject_count=$((subject_count + 1))
+        log_message "INFO" "Processing subject directory: $subject_dir"
+        
+        subject_num=$(basename "$subject_dir" | sed 's/^sub-//')
+        bids_subject="sub-${subject_num}"
+        log_message "INFO" "Subject $subject_dir mapped to $bids_subject"
+        
+        mkdir -p "../$bids_subject/eye"
+        
+        # find and move ASC files from eyetracking directory
+        eyetracking_dir="../sourcedata/eye/$bids_subject"
+        if [ -d "$eyetracking_dir" ]; then
+            log_message "INFO" "Processing eyetracking directory: $eyetracking_dir"
+            for asc_file in "$eyetracking_dir"/*.asc; do
+                if [ ! -f "$asc_file" ]; then
+                    continue
+                fi
+                
+                asc_count=$((asc_count + 1))
+                filename=$(basename "$asc_file")
+                log_message "INFO" "Processing ASC file: $filename"
+                
+                if [[ $filename =~ ([0-9]+)\.asc ]]; then
+                    run_num="${BASH_REMATCH[1]}"
+                    bids_run=$((run_num + 1))
+                    log_message "INFO" "Parsed as retrieval session, run $bids_run"
+                else
+                    print_warning "Could not parse ASC filename: $filename"
+                    log_message "WARNING" "Failed to parse ASC filename: $filename"
+                    continue
+                fi
+                
+                bids_filename="${bids_subject}_task-amass_run-0${bids_run}_eyetrack.asc"
+                bids_path="../$bids_subject/eye/$bids_filename"
+                
+                if [ -f "$bids_path" ]; then
+                    print_status "Skipping $filename (BIDS ASC file already exists: $bids_path)"
+                    skipped_bids_count=$((skipped_bids_count + 1))
+                    log_message "INFO" "Skipped (BIDS ASC exists): $asc_file -> $bids_path"
+                    continue
+                fi
+                
+                print_status "Moving $filename to $bids_path"
+                log_message "INFO" "Moving: $asc_file -> $bids_path"
+                mv "$asc_file" "$bids_path"
+                moved_count=$((moved_count + 1))
+                log_message "INFO" "Successfully moved: $filename"
+            done
+        else
+            log_message "INFO" "No eyetracking directory found for: $subject_dir"
+        fi
+    done
+    
+    log_message "INFO" "ASC file moving summary: $subject_count subjects, $asc_count ASC files, $moved_count moved, $skipped_bids_count already in BIDS"
+    log_message "INFO" "Exiting move_asc_files function"
+}
+
+organize_bids() {
+    log_message "INFO" "Entering organize_bids function"
+    print_status "Organizing files into BIDS format..."
+    
+    subject_count=0
+    csv_count=0
+    copied_count=0
+    skipped_count=0
+    skipped_bids_count=0
+    
+    for subject_dir in "$PUPIL_DIR"/s*; do
+        if [ ! -d "$subject_dir" ]; then
+            continue
+        fi
+        
+        subject_count=$((subject_count + 1))
+        log_message "INFO" "Processing subject directory: $subject_dir"
+        
+        subject_num=$(basename "$subject_dir" | sed 's/[^5]*5//')
+        bids_subject="sub-${subject_num}"
+        log_message "INFO" "Subject $subject_dir mapped to $bids_subject"
+        
+        mkdir -p "$bids_subject/beh"
+        
+        behavior_dir="$subject_dir/behavior"
+        if [ -d "$behavior_dir" ]; then
+            log_message "INFO" "Processing behavior directory: $behavior_dir"
+            for csv_file in "$behavior_dir"/*.csv; do
+                if [ ! -f "$csv_file" ]; then
+                    continue
+                fi
+                
+                csv_count=$((csv_count + 1))
+                filename=$(basename "$csv_file")
+                log_message "INFO" "Processing CSV file: $filename"
+                
+                if [[ $filename =~ prac ]]; then
+                    print_status "Skipping practice file: $filename"
+                    log_message "INFO" "Skipping practice file: $filename"
+                    skipped_count=$((skipped_count + 1))
+                    continue
+                fi
+                
+                if [[ $filename =~ -enc([0-9]+)\.csv ]]; then
+                    session="enc"
+                    run_num="${BASH_REMATCH[1]}"
+                    log_message "INFO" "Parsed as encoding session, run $run_num"
+                elif [[ $filename =~ -ret([0-9]+)\.csv ]]; then
+                    session="ret"
+                    run_num="${BASH_REMATCH[1]}"
+                    log_message "INFO" "Parsed as retrieval session, run $run_num"
+                else
+                    print_warning "Could not parse filename: $filename"
+                    log_message "WARNING" "Failed to parse filename: $filename"
+                    continue
+                fi
+                
+                bids_filename="${bids_subject}_ses-${session}_task-amass_run-0${run_num}_beh.csv"
+                bids_path="$bids_subject/ses-${session}/beh/$bids_filename"
+                
+                if [ -f "$bids_path" ]; then
+                    print_status "Skipping $filename (BIDS CSV file already exists: $bids_path)"
+                    skipped_bids_count=$((skipped_bids_count + 1))
+                    log_message "INFO" "Skipped (BIDS CSV exists): $csv_file -> $bids_path"
+                    continue
+                fi
+                
+                print_status "Copying $filename to $bids_path"
+                log_message "INFO" "Copying: $csv_file -> $bids_path"
+                cp "$csv_file" "$bids_path"
+                copied_count=$((copied_count + 1))
+                log_message "INFO" "Successfully copied: $filename"
+            done
+        else
+            log_message "INFO" "No behavior directory found for: $subject_dir"
+        fi
+    done
+    
+    log_message "INFO" "BIDS organization summary: $subject_count subjects, $csv_count CSV files, $copied_count copied, $skipped_count skipped, $skipped_bids_count already in BIDS"
+    log_message "INFO" "Exiting organize_bids function"
+}
+
+main() {
+    log_message "INFO" "Entering main function"
+    print_status "Starting CLAMP preprocessing..."
+    
+    if [ ! -d "$PUPIL_DIR" ]; then
+        print_error "Pupil directory not found: $PUPIL_DIR"
+        exit 1
+    fi
+    
+    log_message "INFO" "Calling convert_edf_to_asc"
+    convert_edf_to_asc
+    
+    log_message "INFO" "Calling move_asc_files"
+    move_asc_files
+    
+    # log_message "INFO" "Calling organize_bids"
+    # organize_bids
+    
+    print_status "Preprocessing completed successfully!"
+    log_message "INFO" "Exiting main function"
+}
+
+# parse command line args
+case "${1:-all}" in
+    "edf2asc")
+        convert_edf_to_asc
+        ;;
+    "move_asc")
+        move_asc_files
+        ;;
+    "bids")
+        organize_bids
+        ;;
+    "all")
+        main
+        ;;
+    *)
+        echo "Usage: $0 [edf2asc|move_asc|all]"
+        echo "  edf2asc: Convert EDF files to ASC format only"
+        echo "  move_asc: Move ASC files to session directories only"
+        echo "  all: Run all preprocessing steps (default)"
+        exit 1
+        ;;
+esac
+
+log_message "INFO" "Script execution completed" 
