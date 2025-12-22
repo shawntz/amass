@@ -150,7 +150,7 @@ freesurfer_editing:
   local_freesurfer_dir: '~/freesurfer_edits'     # Local directory for downloading/uploading edited FreeSurfer outputs
   subjects_list: 'sub-054'                       # Default subjects list file or comma-separated subject IDs
   download_all: false                            # Download all subjects by default
- .upload_all: false                              # Upload all subjects by default
+  upload_all: false                              # Upload all subjects by default
   backup_originals: true                         # Create backups when uploading (highly recommended)
 
 # ============================================================================
