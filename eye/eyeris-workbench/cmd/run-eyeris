@@ -179,7 +179,6 @@ tryCatch({
             eyeris = eyeris_data,
             save_all = ${SAVE_ALL^^},
             bids_dir = "${BIDS_BASE_DIR}",
-            derivatives_dir = "${BIDS_DERIVATIVES_DIR}",
             participant_id = "${SUBJECT_ID_FORMATTED}",
             task_name = "${TASK_NAME}",
             run_num = "${RUN_ID}",
@@ -188,7 +187,7 @@ tryCatch({
             report_seed = ${REPORT_SEED},
             csv_enabled = FALSE,
             db_enabled = TRUE,
-            db_path = "${BIDS_DERIVATIVES_DIR}/${TASK_NAME}",
+            db_path = "${TASK_NAME}",
             parallel_processing = TRUE,
             verbose = ${VERBOSE^^}
         )
@@ -220,6 +219,23 @@ EOF
 
     if [ $? -eq 0 ]; then
         log_message "INFO" "Finished run-${RUN_ID} for ${BIDS_SUBJECT}"
+
+        # Move outputs from derivatives/sub-XXX to derivatives/eyeris-3.0.1/sub-XXX
+        EYERIS_DERIVATIVES="${BIDS_BASE_DIR}/derivatives/${BIDS_SUBJECT}"
+        if [ -d "$EYERIS_DERIVATIVES" ]; then
+            log_message "INFO" "Moving outputs to ${BIDS_DERIVATIVES_DIR}/${BIDS_SUBJECT}"
+            mkdir -p "${BIDS_DERIVATIVES_DIR}"
+            rsync -av "$EYERIS_DERIVATIVES/" "${BIDS_DERIVATIVES_DIR}/${BIDS_SUBJECT}/"
+            rm -rf "$EYERIS_DERIVATIVES"
+            log_message "INFO" "Outputs moved successfully"
+        fi
+
+        # Move database file if it exists
+        DB_FILE="${BIDS_BASE_DIR}/derivatives/${TASK_NAME}.eyerisdb"
+        if [ -f "$DB_FILE" ]; then
+            mv "$DB_FILE" "${BIDS_DERIVATIVES_DIR}/${TASK_NAME}.eyerisdb"
+            log_message "INFO" "Moved database file to derivatives/eyeris-3.0.1/"
+        fi
     else
         log_message "ERROR" "Failed run-${RUN_ID} for ${BIDS_SUBJECT}"
     fi
