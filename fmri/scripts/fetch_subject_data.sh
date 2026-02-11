@@ -129,8 +129,8 @@ for SUB_ID in "${SUBJECTS[@]}"; do
         run_scp \
             "${REMOTE_HOST}:${REMOTE_FMRIPREP}/${SUB}/anat/${FNAME}" \
             "${LOCAL_ANAT}/${FNAME}" \
-            || ((FAIL_COUNT++))
-        ((FILE_COUNT++))
+            || ((++FAIL_COUNT))
+        ((++FILE_COUNT))
     done
 
     # ── 2. Functional data + confounds (per run) ──
@@ -143,8 +143,8 @@ for SUB_ID in "${SUBJECTS[@]}"; do
         run_scp \
             "${REMOTE_HOST}:${REMOTE_FMRIPREP}/${SUB}/func/${FNAME}" \
             "${LOCAL_FUNC}/${FNAME}" \
-            || ((FAIL_COUNT++))
-        ((FILE_COUNT++))
+            || ((++FAIL_COUNT))
+        ((++FILE_COUNT))
 
         # GIFTI functional data (L + R hemispheres)
         for HEMI in L R; do
@@ -152,8 +152,8 @@ for SUB_ID in "${SUBJECTS[@]}"; do
             run_scp \
                 "${REMOTE_HOST}:${REMOTE_FMRIPREP}/${SUB}/func/${FNAME}" \
                 "${LOCAL_FUNC}/${FNAME}" \
-                || ((FAIL_COUNT++))
-            ((FILE_COUNT++))
+                || ((++FAIL_COUNT))
+            ((++FILE_COUNT))
         done
     done
 
@@ -164,8 +164,8 @@ for SUB_ID in "${SUBJECTS[@]}"; do
         run_scp \
             "${REMOTE_HOST}:${REMOTE_FMRIPREP}/sourcedata/freesurfer/${SUB}/surf/${FNAME}" \
             "${LOCAL_SURF}/${FNAME}" \
-            || ((FAIL_COUNT++))
-        ((FILE_COUNT++))
+            || ((++FAIL_COUNT))
+        ((++FILE_COUNT))
     done
 
     # ── 4. Behavioral event files ──
@@ -174,8 +174,8 @@ for SUB_ID in "${SUBJECTS[@]}"; do
     run_scp \
         "${REMOTE_HOST}:${REMOTE_EVENTS}/${FNAME}" \
         "${LOCAL_BEH}/${FNAME}" \
-        || ((FAIL_COUNT++))
-    ((FILE_COUNT++))
+        || ((++FAIL_COUNT))
+    ((++FILE_COUNT))
 
     # ── Summary ──
     log "────────────────────────────────────────"
