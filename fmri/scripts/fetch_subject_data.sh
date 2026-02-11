@@ -15,7 +15,7 @@ set -euo pipefail
 # ──────────────────────────────────────────────
 # Configuration
 # ──────────────────────────────────────────────
-REMOTE_HOST="shawnsch@login.sherlock.stanford.edu"
+REMOTE_HOST="sherlock"
 REMOTE_FMRIPREP="/oak/stanford/groups/awagner/yaams-haams/derivatives/fmriprep-24.0.1"
 REMOTE_EVENTS="/oak/stanford/groups/awagner/yaams-haams/event_files"
 
